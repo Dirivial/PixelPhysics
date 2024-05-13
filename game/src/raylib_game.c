@@ -25,6 +25,7 @@
 #define HEIGHT 512
 
 typedef enum ParticleType {
+    SOLID_STUCK,
     SOLID,
     LIQUID,
     GAS,
@@ -58,24 +59,11 @@ static const int screenHeight = 512;
 particle* grid[HEIGHT][WIDTH] = { NULL };
 
 float gravity = 10.0;
-
-// Required variables to manage screen transitions (fade-in, fade-out)
-static float transAlpha = 0.0f;
-static bool onTransition = false;
-static bool transFadeOut = false;
-static int transFromScreen = -1;
-static GameScreen transToScreen = UNKNOWN;
+int frameCounter = 0;
 
 //----------------------------------------------------------------------------------
 // Local Functions Declaration
 //----------------------------------------------------------------------------------
-static void ChangeToScreen(int screen);     // Change to screen, no transition effect
-
-static void TransitionToScreen(int screen); // Request transition to next screen
-static void UpdateTransition(void);         // Update transition effect
-static void DrawTransition(void);           // Draw transition effect (full-screen rectangle)
-
-static void UpdateDrawFrame(void);          // Update and draw one frame
 
 static float MinFloat(float a, float b);
 static float Clamp(float v, float min, float max);
@@ -83,10 +71,12 @@ static Vector2 Vector2Clamp(Vector2 value, Vector2 min, Vector2 max);
 
 static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
 static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
+static void UpdateGasParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
+
 static particle* CreateParticle(int id, ParticleType type);
 static void SwapParticles(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2, int y2);
-static void MoveParticle(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2, int y2);
-static void TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int stepsX, int stepsY);
+static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x1, int y1);
+static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, int id, ParticleType type);
 
 //----------------------------------------------------------------------------------
 // Main entry point
@@ -104,17 +94,7 @@ int main(void)
 
     InitAudioDevice();      // Initialize audio device
 
-    // Load global data (assets that must be available in all screens, i.e. font)
-    font = LoadFont("resources/mecha.png");
-    music = LoadMusicStream("resources/ambient.ogg");
-    fxCoin = LoadSound("resources/coin.wav");
-
-    SetMusicVolume(music, 1.0f);
-    PlayMusicStream(music);
-
     // Setup and init first screen
-    //currentScreen = LOGO;
-    //InitLogoScreen();
 
 #if defined(PLATFORM_WEB)
     emscripten_set_main_loop(UpdateDrawFrame, 60, 1);
@@ -125,6 +105,7 @@ int main(void)
     // Main game loop
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
+        frameCounter = (frameCounter + 1) % INT_MAX;
         float scale = MinFloat((float)GetScreenWidth() / WIDTH, (float)GetScreenHeight() / HEIGHT);
 
 		int maxX = GetScreenWidth();
@@ -134,34 +115,31 @@ int main(void)
 		int x = (mouse.x / maxX) * WIDTH;
 		int y = (mouse.y / maxY) * HEIGHT;
 		if (IsKeyDown(KEY_S)) {
-			for (int i = -15; i < 16; i++) {
-				for (int j = -15; j < 16; j++) {
-                    if (abs(i) + abs(j) < 20) {
-						if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
-							if ((x + i + j) % 7 == 0 && (y + j) % 5 == 0) {
-								grid[y + j][x + i] = CreateParticle(1, SOLID);
-							}
-						}
-                    }
-				}
-			}
+            SpawnParticles(grid, x, y, 1, SOLID);
 		}
 		else if (IsKeyDown(KEY_W)) {
-			for (int i = -15; i < 16; i++) {
-				for (int j = -15; j < 16; j++) {
-                    if (abs(i) + abs(j) < 20) {
-						if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
-							if ((x + i + j) % 7 == 0 && (y + j) % 5 == 0) {
-								grid[y + j][x + i] = CreateParticle(2, LIQUID);
-							}
-						}
-                    }
-				}
-			}
+            SpawnParticles(grid, x, y, 2, LIQUID);
+		}
+		else if (IsKeyDown(KEY_G)) {
+            SpawnParticles(grid, x, y, 3, GAS);
+		}
+		else if (IsKeyDown(KEY_E)) {
+            SpawnParticles(grid, x, y, 4, SOLID_STUCK);
 		}
 
-		for (int x = 0; x < WIDTH; x++) {
-			for (int y = HEIGHT - 1; y > 0; y--) {
+        int start, end, step;
+        if (frameCounter % 2 == 0) { // Left to right on even frames
+			start = 0;
+			end = WIDTH;
+			step = 1;
+		} else { // Right to left on odd frames
+			start = WIDTH - 1;
+			end = -1;
+			step = -1;
+		}
+
+		for (int x = start; x != end; x += step) {
+			for (int y = HEIGHT - 1; y >= 0; y--) {
 				if (grid[y][x] != NULL && !grid[y][x]->has_been_updated) {
                     switch (grid[y][x]->id) {
                     case 1:
@@ -170,6 +148,8 @@ int main(void)
                     case 2:
                         UpdateWaterParticle(grid, x, y);
                         break;
+                    case 3:
+                        UpdateGasParticle(grid, x, y);
                     }
 				}
 			}
@@ -198,9 +178,23 @@ int main(void)
                                 DrawPixel(x, y, BLUE);
                             }
                             else {
-                                DrawPixel(x, y, DARKBLUE);
+                                DrawPixel(x, y, RED);
                             }
 							break;
+						case 3:
+                            if (grid[y][x]->has_been_updated) {
+                                DrawPixel(x, y, GRAY);
+                            }
+                            else {
+                                DrawPixel(x, y, DARKGRAY);
+                            }
+							break;
+						case 4:
+                            DrawPixel(x, y, DARKGREEN);
+							break;
+                        default:
+                            DrawPixel(x, y, BROWN);
+
 						}
                     }
                 }
@@ -233,11 +227,6 @@ int main(void)
     //
     UnloadRenderTexture(target);
 
-    // Unload global data loaded
-    UnloadFont(font);
-    UnloadMusicStream(music);
-    UnloadSound(fxCoin);
-
     CloseAudioDevice();     // Close audio context
 
     CloseWindow();          // Close window and OpenGL context
@@ -245,6 +234,35 @@ int main(void)
 
     return 0;
 }
+
+static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, int id, ParticleType type) {
+    if (type != SOLID_STUCK) {
+		for (int i = -15; i < 16; i++) {
+			for (int j = -15; j < 16; j++) {
+				if (abs(i) + abs(j) < 20) {
+					if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
+						if ((x + i + j) % 7 == 0 && (y + j) % 5 == 0) {
+							grid[y + j][x + i] = CreateParticle(id, type);
+						}
+					}
+				}
+			}
+		}
+    }
+    else {
+		for (int i = -15; i < 16; i++) {
+			for (int j = -15; j < 16; j++) {
+				if (abs(i) + abs(j) < 20) {
+					if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
+					    grid[y + j][x + i] = CreateParticle(id, type);
+					}
+				}
+			}
+		}
+    }
+}
+
+
 static float Clamp(float v, float min, float max) {
     if (v < min) 
     {
@@ -278,79 +296,87 @@ static void SwapParticles(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2,
 	particle* tmp = grid[y2][x2];
 	grid[y2][x2] = grid[y1][x1];
 	grid[y1][x1] = tmp;
+    tmp->velocity.y = -2;
+    tmp->velocity.x = (rand() % 2 == 0) ? -0.5f : 0.5f;
 }
 
-static void MoveParticle(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2, int y2) {
-	grid[y1][x1]->has_been_updated = true;
-	grid[y2][x2] = grid[y1][x1];
-	grid[y1][x1] = NULL;
-}
+static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x1, int y1) {
 
-static void TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int stepsX, int stepsY) {
-        // Calculate direction of each step
-    int dx = (stepsX > 0) ? 1 : (stepsX < 0) ? -1 : 0;
-    int dy = (stepsY > 0) ? 1 : (stepsY < 0) ? -1 : 0;
+    bool moved = false;
 
-    int currentX = x;
-    int currentY = y;
+    int ax = x;
+    int ay = y;
 
-    // Perform movement in x-direction
-    for (int i = 0; i < abs(stepsX); i++) {
-        int nextX = currentX + dx;
-        // Check if out of bounds or if the next cell is occupied
-        if (nextX < 0 || nextX >= WIDTH || grid[currentY][nextX] != NULL) {
-            break;  // Stop the movement if out of bounds or blocked
-        }
-        grid[currentY][nextX] = grid[currentY][currentX];
-        grid[currentY][currentX] = NULL;
-        currentX = nextX;
-    }
+	int dx =  abs (x1 - x), sx = x < x1 ? 1 : -1;
+	int dy = -abs (y1 - y), sy = y < y1 ? 1 : -1; 
+	int err = dx + dy, e2; /* error value e_xy */
 
-    // Perform movement in y-direction
-    for (int j = 0; j < abs(stepsY); j++) {
-        int nextY = currentY + dy;
-        // Check if out of bounds or if the next cell is occupied
-        if (nextY < 0 || nextY >= HEIGHT || grid[nextY][currentX] != NULL) {
-            break;  // Stop the movement if out of bounds or blocked
-        }
-        grid[nextY][currentX] = grid[currentY][currentX];
-        grid[currentY][currentX] = NULL;
-        currentY = nextY;
-    }
+	for (;;){  /* loop */
+
+		if (x == x1 && y == y1) break;
+		e2 = 2 * err;
+
+		if (e2 >= dy) { 
+            err += dy;
+            x += sx;
+			// If not blocked, continue
+			if (x < 0 || x >= WIDTH  || grid[y][x] != NULL) {
+				break;
+			}
+
+			grid[y][x] = grid[y][ax];
+			grid[y][ax] = NULL;
+			ax = x;
+            moved = true;
+        } /* e_xy+e_x > 0 */
+
+	    if (e2 <= dx) {
+            err += dx;
+            y += sy;
+			// If not blocked, continue
+			if (y < 0 || y >= HEIGHT  || grid[y][x] != NULL) {
+                break;
+			}
+
+			grid[y][x] = grid[ay][x];
+			grid[ay][x] = NULL;
+			ay = y;
+            moved = true;
+        } /* e_xy+e_y < 0 */
+	}
+    return moved;
 }
 
 static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y][x] == NULL) return;
 
     float dt = GetFrameTime();
+    particle* p = grid[y][x];
 
-    grid[y][x]->velocity.y = Clamp(grid[y][x]->velocity.y + (gravity * dt), -10.0, 10.0);
-    int vy = grid[y][x]->velocity.y;
+    p->velocity.y = Clamp(p->velocity.y + (gravity * dt), -10.0, 10.0);
+    int vy = p->velocity.y;
 
     // Down
     if (grid[y + 1][x] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, 0, vy);
+        p->has_been_updated = TranslateParticle(grid, x, y, x, y + vy);
     }
-    else if (grid[y + 1][x]->id == 2 && !grid[y+1][x]->has_been_updated) {
-	    grid[y][x]->has_been_updated = true;
+    else if (grid[y + 1][x]->type == LIQUID && !grid[y+1][x]->has_been_updated) {
+	    p->has_been_updated = true;
         SwapParticles(grid, x, y, x, y + 1);
     }
     // Down left
     else if (grid[y + 1][x-1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, -1, vy);
+        p->has_been_updated = TranslateParticle(grid, x, y, x - 1, y + vy);
     }
-    else if (grid[y + 1][x-1]->id == 2 && !grid[y+1][x-1]->has_been_updated) {
+    else if (grid[y + 1][x-1]->type == LIQUID && !grid[y+1][x-1]->has_been_updated) {
 	    grid[y][x]->has_been_updated = true;
         SwapParticles(grid, x, y, x - 1, y + 1);
     }
     // Down right
     else if (grid[y + 1][x+1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, 1, vy);
+        p->has_been_updated = TranslateParticle(grid, x, y, x + 1, y + vy);
     }
-    else if (grid[y + 1][x+1]->id == 2 && !grid[y+1][x+1]->has_been_updated) {
+    else if (grid[y + 1][x+1]->type == LIQUID && !grid[y+1][x+1]->has_been_updated) {
 	    grid[y][x]->has_been_updated = true;
         SwapParticles(grid, x, y, x+1, y + 1);
     }
@@ -358,30 +384,131 @@ static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
         grid[y][x]->velocity.y /= 2.0;
     }
 }
+
 static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y][x] == NULL) return;
 
-	if (grid[y + 1][x] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, 0, 1);
+    float dt = GetFrameTime();
+    particle* p = grid[y][x];
+
+    p->velocity.y = Clamp(p->velocity.y + (gravity * dt), -10.0, 10.0);
+    int vy = p->velocity.y;
+    p->velocity.x = Clamp(p->velocity.x + (0.1f * dt * (rand() % 2 ? 1 : -1)), -5.0, 5.0);
+    int vx = grid[y][x]->velocity.x;
+
+	if (grid[y+1][x] == NULL) {
+        // Add some variance because it looks kinda cool and seems to solve some issues
+	    p->has_been_updated = TranslateParticle(grid, x, y, x + (rand() % 2 ? 1 : -1), y + vy);
 	}
-	else if (x > 0 && grid[y + 1][x - 1] == NULL) {
+    else {
+        if (vx > 0) {
+            // Particle wants to move to the right
+            
+            // Down right
+			if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
+				p->has_been_updated = TranslateParticle(grid, x, y, x+vx, y+vy);
+			}
+            // Right
+			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
+                // Reduce vertical velocity
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+                vx *= 2;
+                p->velocity.x = Clamp(p->velocity.x * 2, 0, 5);
+
+				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y);
+			}
+            // Down left
+			else if (x > 0 && grid[y + 1][x - 1] == NULL) {
+                // Make particle move to the left in the future
+                p->velocity.x = -2;
+				p->has_been_updated = TranslateParticle(grid, x, y, x-2, y+vy);
+			}
+            // Left
+			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
+                // Make particle move to the left in the future
+                p->velocity.x = -2;
+
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+				p->has_been_updated = TranslateParticle(grid, x, y, x - 2, y);
+			}
+        }
+        else {
+            if (vx == 0) {
+                vx = -1;
+            }
+            // Particle wants to move to the left
+
+			if (x > 0 && grid[y + 1][x - 1] == NULL) {
+                // Left down
+				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y+vy);
+			}
+			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
+                // Left
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+                vx *= 2;
+                p->velocity.x = Clamp(p->velocity.x * 2, -5, 0);
+
+				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y);
+			}
+			else if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
+                // Right down
+                p->velocity.x = 2;
+				p->has_been_updated = TranslateParticle(grid, x, y, x+2, y+vy);
+			}
+			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
+                // Right
+                p->velocity.x = 2;
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+				p->has_been_updated = TranslateParticle(grid, x, y, x + 2, y);
+			}
+
+        }
+    }
+}
+
+static void UpdateGasParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
+    if (grid[y][x] == NULL) return;
+
+    float dt = GetFrameTime();
+
+    grid[y][x]->velocity.y = Clamp(grid[y][x]->velocity.y + (gravity * dt * -1), -10.0, 10.0);
+    int vy = grid[y][x]->velocity.y;
+    grid[y][x]->velocity.x = Clamp(grid[y][x]->velocity.x + (5 * dt), -5.0, 5.0);
+    int vx = grid[y][x]->velocity.x;
+
+	if (grid[y-1][x] == NULL) {
 	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, -1, 1);
+        TranslateParticle(grid, x, y, x, y+vy);
 	}
-	else if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
+	else if (x > 0 && grid[y - 1][x - 1] == NULL) {
 	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, 1, 1);
+        TranslateParticle(grid, x, y, x-1, y+vy);
+	}
+	else if (x < WIDTH - 1 && grid[y - 1][x + 1] == NULL) {
+	    grid[y][x]->has_been_updated = true;
+        TranslateParticle(grid, x, y, x+1, y+vy);
     }
     else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
 	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, -5, 0);
+        grid[y][x]->velocity.y /= 2.0;
+        vy = grid[y][x]->velocity.y;
+        TranslateParticle(grid, x, y, x - 5, y + vy);
     }
     else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
 	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, 5, 0);
+        grid[y][x]->velocity.y /= 2.0;
+        vy = grid[y][x]->velocity.y;
+        TranslateParticle(grid, x, y, x + 5, y + vy);
     }
 }
+
 
 static Vector2 Vector2Clamp(Vector2 value, Vector2 min, Vector2 max) {
     Vector2 result;
