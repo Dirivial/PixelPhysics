@@ -31,13 +31,48 @@ typedef enum ParticleType {
     GAS,
 } ParticleType;
 
+typedef enum ParticleMaterial {
+    NOTHING,
+    SAND,
+    WATER,
+    SMOKE,
+    WOOD,
+    LAVA,
+    STONE,
+    FIRE,
+} ParticleMaterial;
+
+typedef struct MaterialProperties {
+    float modX;
+    float modY;
+    float maxX;
+    float maxY;
+    float initLifeTime;
+    bool decaying;
+    bool acting;
+    bool flammable;
+    ParticleType type;
+    Color initialColor;
+} MaterialProperties;
+
+static MaterialProperties props[8] = {
+    {0, 0, 0, 0, 0, false, false, false, SOLID_STUCK, {0, 0, 0, 255}}, // Nothing
+    {2, 2, 5, 10, 0, false, false, false, SOLID, {255, 203, 0, 255}}, // Sand
+    {2, 2, 10, 10, 0, false, false, false, LIQUID, {0, 121, 241, 255}}, // Water
+    {2, 2, 5, 10, 5, true, false, false, GAS, {110, 110, 110, 255}}, // Smoke
+    {0, 0, 0, 0, 0, false, false, true, SOLID_STUCK, {76, 63, 47, 255}}, // Wood
+    {2, 1, 1.5, 4, 0, false, true, false, LIQUID, {255, 101, 32, 255}}, // Lava
+    {0, 0, 0, 0, 0, false, false, false, SOLID_STUCK, {140, 140, 140, 255}}, // Stone
+    {0, 0, 0, 0, 1, true, true, false, SOLID_STUCK, {255, 180, 10, 255}}, // Fire
+};
+
 typedef struct particle {
     unsigned int id;
-    float life_time;
+    float lifeTime;
     Vector2 velocity;
     Color color;
-    bool has_been_updated;
-    ParticleType type;
+    bool hasBeenUpdated;
+    ParticleMaterial mat;
 } particle;
 
 //----------------------------------------------------------------------------------
@@ -69,14 +104,15 @@ static float MinFloat(float a, float b);
 static float Clamp(float v, float min, float max);
 static Vector2 Vector2Clamp(Vector2 value, Vector2 min, Vector2 max);
 
-static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
-static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
+static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
+static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
 static void UpdateGasParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
+static void UpdateSolidStuckParticle(particle* grid[HEIGHT][WIDTH], int x, int y);
 
-static particle* CreateParticle(int id, ParticleType type);
+static particle* CreateParticle(ParticleMaterial mat);
 static void SwapParticles(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2, int y2);
 static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x1, int y1);
-static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, int id, ParticleType type);
+static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, ParticleMaterial material);
 
 //----------------------------------------------------------------------------------
 // Main entry point
@@ -93,6 +129,14 @@ int main(void)
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT);
 
     InitAudioDevice();      // Initialize audio device
+
+    // Set initial colors
+    props[NOTHING].initialColor = RAYWHITE;
+    props[SAND].initialColor = GOLD;
+    props[WATER].initialColor = BLUE;
+    props[SMOKE].initialColor = DARKGRAY;
+    props[WOOD].initialColor = DARKBROWN;
+    props[LAVA].initialColor = ORANGE;
 
     // Setup and init first screen
 
@@ -115,16 +159,19 @@ int main(void)
 		int x = (mouse.x / maxX) * WIDTH;
 		int y = (mouse.y / maxY) * HEIGHT;
 		if (IsKeyDown(KEY_S)) {
-            SpawnParticles(grid, x, y, 1, SOLID);
+            SpawnParticles(grid, x, y, SAND);
 		}
 		else if (IsKeyDown(KEY_W)) {
-            SpawnParticles(grid, x, y, 2, LIQUID);
+            SpawnParticles(grid, x, y, WATER);
 		}
 		else if (IsKeyDown(KEY_G)) {
-            SpawnParticles(grid, x, y, 3, GAS);
+            SpawnParticles(grid, x, y, SMOKE);
 		}
 		else if (IsKeyDown(KEY_E)) {
-            SpawnParticles(grid, x, y, 4, SOLID_STUCK);
+            SpawnParticles(grid, x, y, WOOD);
+		}
+		else if (IsKeyDown(KEY_A)) {
+            SpawnParticles(grid, x, y, LAVA);
 		}
 
         int start, end, step;
@@ -140,16 +187,20 @@ int main(void)
 
 		for (int x = start; x != end; x += step) {
 			for (int y = HEIGHT - 1; y >= 0; y--) {
-				if (grid[y][x] != NULL && !grid[y][x]->has_been_updated) {
-                    switch (grid[y][x]->id) {
-                    case 1:
-                        UpdateSandParticle(grid, x, y);
+				if (grid[y][x] != NULL && !grid[y][x]->hasBeenUpdated) {
+                    switch (props[grid[y][x]->mat].type) {
+                    case SOLID:
+                        UpdateSolidParticle(grid, x, y);
                         break;
-                    case 2:
-                        UpdateWaterParticle(grid, x, y);
+                    case LIQUID:
+                        UpdateLiquidParticle(grid, x, y);
                         break;
-                    case 3:
+                    case GAS:
                         UpdateGasParticle(grid, x, y);
+                        break;
+                    case SOLID_STUCK:
+                        UpdateSolidStuckParticle(grid, x, y);
+                        break;
                     }
 				}
 			}
@@ -164,38 +215,7 @@ int main(void)
             for (int x = 0; x < WIDTH; x++) {
                 for (int y = 0; y < HEIGHT; y++) {
                     if (grid[y][x] != NULL) {
-						switch (grid[y][x]->id) {
-						case 1:
-                            if (grid[y][x]->has_been_updated) {
-                                DrawPixel(x, y, GOLD);
-                            }
-                            else {
-                                DrawPixel(x, y, ORANGE);
-                            }
-							break;
-						case 2:
-                            if (grid[y][x]->has_been_updated) {
-                                DrawPixel(x, y, BLUE);
-                            }
-                            else {
-                                DrawPixel(x, y, RED);
-                            }
-							break;
-						case 3:
-                            if (grid[y][x]->has_been_updated) {
-                                DrawPixel(x, y, GRAY);
-                            }
-                            else {
-                                DrawPixel(x, y, DARKGRAY);
-                            }
-							break;
-						case 4:
-                            DrawPixel(x, y, DARKGREEN);
-							break;
-                        default:
-                            DrawPixel(x, y, BROWN);
-
-						}
+                        DrawPixel(x, y, grid[y][x]->color);
                     }
                 }
             }
@@ -214,8 +234,8 @@ int main(void)
 
 		for (int x = 0; x < WIDTH; x++) {
 			for (int y = 0; y < HEIGHT; y++) {
-				if (grid[y][x] != NULL && grid[y][x]->has_been_updated) {
-                    grid[y][x]->has_been_updated = false;
+				if (grid[y][x] != NULL && grid[y][x]->hasBeenUpdated) {
+                    grid[y][x]->hasBeenUpdated = false;
 				}
 			}
 		}
@@ -235,14 +255,14 @@ int main(void)
     return 0;
 }
 
-static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, int id, ParticleType type) {
-    if (type != SOLID_STUCK) {
+static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, ParticleMaterial mat) {
+    if (props[mat].type != SOLID_STUCK) {
 		for (int i = -15; i < 16; i++) {
 			for (int j = -15; j < 16; j++) {
 				if (abs(i) + abs(j) < 20) {
 					if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
 						if ((x + i + j) % 7 == 0 && (y + j) % 5 == 0) {
-							grid[y + j][x + i] = CreateParticle(id, type);
+							grid[y + j][x + i] = CreateParticle(mat);
 						}
 					}
 				}
@@ -254,7 +274,7 @@ static void SpawnParticles(particle* grid[HEIGHT][WIDTH], int x, int y, int id, 
 			for (int j = -15; j < 16; j++) {
 				if (abs(i) + abs(j) < 20) {
 					if (x + i >= 0 && x + i < WIDTH && y + j >= 0 && y + j < HEIGHT && grid[y + j][x + i] == NULL) {
-					    grid[y + j][x + i] = CreateParticle(id, type);
+					    grid[y + j][x + i] = CreateParticle(mat);
 					}
 				}
 			}
@@ -275,29 +295,31 @@ static float Clamp(float v, float min, float max) {
     return v;
 }
 
-static particle* CreateParticle(int id, ParticleType type) {
+static particle* CreateParticle(ParticleMaterial material) {
     particle* newParticle = (particle*) malloc(sizeof(particle));
     if (newParticle == NULL) {
         perror("Failed to allocate memory for new particle");
         exit(1);
     }
-    newParticle->id = id;
-    newParticle->type = type;
-    newParticle->has_been_updated = false;
-    newParticle->color = ORANGE;
+    newParticle->mat = material;
+    if (props[material].decaying) {
+        newParticle->lifeTime = props[material].initLifeTime;
+    }
+    newParticle->hasBeenUpdated = false;
+    newParticle->color = props[material].initialColor;
     newParticle->velocity.x = 0.0f;
     newParticle->velocity.y = 0.0f;
     return newParticle;
 }
 
 static void SwapParticles(particle* grid[HEIGHT][WIDTH], int x1, int y1, int x2, int y2) {
-	grid[y2][x2]->has_been_updated = true;
+    grid[y2][x2]->hasBeenUpdated = true;
 
-	particle* tmp = grid[y2][x2];
-	grid[y2][x2] = grid[y1][x1];
-	grid[y1][x1] = tmp;
-    tmp->velocity.y = -2;
-    tmp->velocity.x = (rand() % 2 == 0) ? -0.5f : 0.5f;
+    particle* tmp = grid[y2][x2];
+    grid[y2][x2] = grid[y1][x1];
+    grid[y1][x1] = tmp;
+    tmp->velocity.y = -3;
+    tmp->velocity.x = (x1 < x2) ? props[tmp->mat].maxX : -props[tmp->mat].maxX;
 }
 
 static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x1, int y1) {
@@ -347,7 +369,58 @@ static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x
     return moved;
 }
 
-static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
+static void UpdateSolidStuckParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
+    if (grid[y][x] == NULL) return;
+    
+    float dt = GetFrameTime();
+    particle* p = grid[y][x];
+
+    if (p->hasBeenUpdated) return;
+    MaterialProperties mat = props[p->mat];
+
+    int randNum = rand();
+
+    if (mat.decaying && randNum % 10 < 4) {
+		p->lifeTime -= dt;
+		if (p->lifeTime <= 0) {
+			grid[y][x] = NULL;
+            if (p->mat == FIRE) {
+                grid[y][x] = CreateParticle(SMOKE);
+            }
+			free(p);
+
+			return;
+		}
+    }
+
+    if (mat.acting) {
+        if (p->mat == FIRE) {
+            // Look for flammable stuff
+            if (grid[y + 1][x] != NULL && props[grid[y + 1][x]->mat].flammable && randNum % 15 == 1) {
+                free(grid[y + 1][x]);
+                grid[y + 1][x] = CreateParticle(FIRE);
+            }
+            else if (grid[y - 1][x] != NULL && props[grid[y - 1][x]->mat].flammable && randNum % 15 == 1) {
+                free(grid[y - 1][x]);
+                grid[y - 1][x] = CreateParticle(FIRE);
+            }
+            else if (grid[y][x + 1] != NULL && props[grid[y][x + 1]->mat].flammable && randNum % 15 == 1) {
+                free(grid[y][x + 1]);
+                grid[y][x + 1] = CreateParticle(FIRE);
+            }
+            else if (grid[y][x - 1] != NULL && props[grid[y][x - 1]->mat].flammable && randNum % 15 == 1) {
+                free(grid[y][x-1]);
+                grid[y][x-1] = CreateParticle(FIRE);
+            }
+            else if (randNum % 15 == 0 && grid[y - 1][x] == NULL) {
+                // Emit smoke
+                grid[y - 1][x] = CreateParticle(SMOKE);
+            }
+        }
+    }
+}
+
+static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y][x] == NULL) return;
 
     float dt = GetFrameTime();
@@ -358,26 +431,26 @@ static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
 
     // Down
     if (grid[y + 1][x] == NULL) {
-        p->has_been_updated = TranslateParticle(grid, x, y, x, y + vy);
+        p->hasBeenUpdated = TranslateParticle(grid, x, y, x, y + vy);
     }
-    else if (grid[y + 1][x]->type == LIQUID && !grid[y+1][x]->has_been_updated) {
-	    p->has_been_updated = true;
+    else if (props[grid[y + 1][x]->mat].type == LIQUID && !grid[y+1][x]->hasBeenUpdated) {
+	    p->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x, y + 1);
     }
     // Down left
     else if (grid[y + 1][x-1] == NULL) {
-        p->has_been_updated = TranslateParticle(grid, x, y, x - 1, y + vy);
+        p->hasBeenUpdated = TranslateParticle(grid, x, y, x - 1, y + vy);
     }
-    else if (grid[y + 1][x-1]->type == LIQUID && !grid[y+1][x-1]->has_been_updated) {
-	    grid[y][x]->has_been_updated = true;
+    else if (props[grid[y + 1][x-1]->mat].type == LIQUID && !grid[y+1][x-1]->hasBeenUpdated) {
+	    grid[y][x]->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x - 1, y + 1);
     }
     // Down right
     else if (grid[y + 1][x+1] == NULL) {
-        p->has_been_updated = TranslateParticle(grid, x, y, x + 1, y + vy);
+        p->hasBeenUpdated = TranslateParticle(grid, x, y, x + 1, y + vy);
     }
-    else if (grid[y + 1][x+1]->type == LIQUID && !grid[y+1][x+1]->has_been_updated) {
-	    grid[y][x]->has_been_updated = true;
+    else if (props[grid[y + 1][x+1]->mat].type == LIQUID && !grid[y+1][x+1]->hasBeenUpdated) {
+	    grid[y][x]->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x+1, y + 1);
     }
     else {
@@ -385,20 +458,24 @@ static void UpdateSandParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     }
 }
 
-static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
+static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y][x] == NULL) return;
 
     float dt = GetFrameTime();
     particle* p = grid[y][x];
+    int randNum = rand();
 
-    p->velocity.y = Clamp(p->velocity.y + (gravity * dt), -10.0, 10.0);
+    MaterialProperties matProps = props[p->mat];
+
+    p->velocity.y = Clamp(p->velocity.y + (gravity * dt), -matProps.maxY, matProps.maxY);
     int vy = p->velocity.y;
-    p->velocity.x = Clamp(p->velocity.x + (0.1f * dt * (rand() % 2 ? 1 : -1)), -5.0, 5.0);
+
+    p->velocity.x = Clamp(p->velocity.x + (0.01f * dt * (rand() % 2 ? 1 : -1)), -matProps.maxX, matProps.maxX);
     int vx = grid[y][x]->velocity.x;
 
 	if (grid[y+1][x] == NULL) {
         // Add some variance because it looks kinda cool and seems to solve some issues
-	    p->has_been_updated = TranslateParticle(grid, x, y, x + (rand() % 2 ? 1 : -1), y + vy);
+	    p->hasBeenUpdated = TranslateParticle(grid, x, y, x + (rand() % 2 ? 1 : -1), y + vy);
 	}
     else {
         if (vx > 0) {
@@ -406,24 +483,24 @@ static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
             
             // Down right
 			if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
-				p->has_been_updated = TranslateParticle(grid, x, y, x+vx, y+vy);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x+vx, y+vy);
 			}
             // Right
 			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
                 // Reduce vertical velocity
-				p->velocity.y /= 2.0;
+				p->velocity.y /= matProps.modY;
 				vy = p->velocity.y;
 
-                vx *= 2;
-                p->velocity.x = Clamp(p->velocity.x * 2, 0, 5);
+                vx *= matProps.modX;
+                p->velocity.x = Clamp(p->velocity.x * matProps.modX, 0, matProps.maxX);
 
-				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y);
 			}
             // Down left
 			else if (x > 0 && grid[y + 1][x - 1] == NULL) {
                 // Make particle move to the left in the future
                 p->velocity.x = -2;
-				p->has_been_updated = TranslateParticle(grid, x, y, x-2, y+vy);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x-2, y+vy);
 			}
             // Left
 			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
@@ -433,7 +510,7 @@ static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
 				p->velocity.y /= 2.0;
 				vy = p->velocity.y;
 
-				p->has_been_updated = TranslateParticle(grid, x, y, x - 2, y);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x - 2, y);
 			}
         }
         else {
@@ -444,31 +521,53 @@ static void UpdateWaterParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
 
 			if (x > 0 && grid[y + 1][x - 1] == NULL) {
                 // Left down
-				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y+vy);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y+vy);
 			}
 			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
                 // Left
-				p->velocity.y /= 2.0;
+				p->velocity.y /= matProps.modY;
 				vy = p->velocity.y;
 
-                vx *= 2;
-                p->velocity.x = Clamp(p->velocity.x * 2, -5, 0);
+                vx *= matProps.modX;
+                p->velocity.x = Clamp(p->velocity.x * matProps.modX, -matProps.maxX, 0);
 
-				p->has_been_updated = TranslateParticle(grid, x, y, x + vx, y);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y);
 			}
 			else if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
                 // Right down
                 p->velocity.x = 2;
-				p->has_been_updated = TranslateParticle(grid, x, y, x+2, y+vy);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x+2, y+vy);
 			}
 			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
                 // Right
                 p->velocity.x = 2;
 				p->velocity.y /= 2.0;
 				vy = p->velocity.y;
-				p->has_been_updated = TranslateParticle(grid, x, y, x + 2, y);
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + 2, y);
 			}
 
+        }
+    }
+
+    if (matProps.acting) {
+        if (p->mat == LAVA) {
+            // Look for flammable stuff
+            if (grid[y + 1][x] != NULL && props[grid[y + 1][x]->mat].flammable && randNum % 2 == 0) {
+                free(grid[y + 1][x]);
+                grid[y + 1][x] = CreateParticle(FIRE);
+            }
+            else if (grid[y - 1][x] != NULL && props[grid[y - 1][x]->mat].flammable && randNum % 2 == 1) {
+                free(grid[y - 1][x]);
+                grid[y - 1][x] = CreateParticle(FIRE);
+            }
+            else if (grid[y][x + 1] != NULL && props[grid[y][x + 1]->mat].flammable && randNum % 2 == 0) {
+                free(grid[y][x + 1]);
+                grid[y][x + 1] = CreateParticle(FIRE);
+            }
+            else if (grid[y][x - 1] != NULL && props[grid[y][x - 1]->mat].flammable && randNum % 2 == 1) {
+                free(grid[y][x-1]);
+                grid[y][x-1] = CreateParticle(FIRE);
+            }
         }
     }
 }
@@ -477,35 +576,104 @@ static void UpdateGasParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y][x] == NULL) return;
 
     float dt = GetFrameTime();
+    particle* p = grid[y][x];
+    if (p->hasBeenUpdated) return;
 
-    grid[y][x]->velocity.y = Clamp(grid[y][x]->velocity.y + (gravity * dt * -1), -10.0, 10.0);
-    int vy = grid[y][x]->velocity.y;
-    grid[y][x]->velocity.x = Clamp(grid[y][x]->velocity.x + (5 * dt), -5.0, 5.0);
+    int randNum = rand();
+    if (randNum % 10 < 4) {
+		p->lifeTime -= dt;
+		if (p->lifeTime <= 0) {
+			grid[y][x] = NULL;
+			free(p);
+			return;
+		}
+    }
+
+    p->velocity.y = Clamp(p->velocity.y + (gravity * dt * -1.5f), -10.0, 10.0);
+    int vy = p->velocity.y;
+    p->velocity.x = Clamp(p->velocity.x + (0.1f * dt * (randNum % 2 ? 0.5f : -0.5f)), -5.0, 5.0);
     int vx = grid[y][x]->velocity.x;
 
+    // Straight up
 	if (grid[y-1][x] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, x, y+vy);
+        // Add some variance because it looks kinda cool and seems to solve some issues
+	    p->hasBeenUpdated = TranslateParticle(grid, x, y, x + (randNum % 2 ? 1 : -1), y + vy);
 	}
-	else if (x > 0 && grid[y - 1][x - 1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, x-1, y+vy);
-	}
-	else if (x < WIDTH - 1 && grid[y - 1][x + 1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        TranslateParticle(grid, x, y, x+1, y+vy);
-    }
-    else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        grid[y][x]->velocity.y /= 2.0;
-        vy = grid[y][x]->velocity.y;
-        TranslateParticle(grid, x, y, x - 5, y + vy);
-    }
-    else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
-	    grid[y][x]->has_been_updated = true;
-        grid[y][x]->velocity.y /= 2.0;
-        vy = grid[y][x]->velocity.y;
-        TranslateParticle(grid, x, y, x + 5, y + vy);
+    else {
+        if (vx > 0) {
+            // Particle wants to move to the right
+            
+            // Up right
+			if (x < WIDTH - 1 && grid[y - 1][x + 1] == NULL) {
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x+vx, y+vy);
+			}
+            // Right
+			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
+                // Reduce vertical velocity
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+                vx *= 1.5f;
+                p->velocity.x = Clamp(p->velocity.x * 1.5f, 0, 5);
+
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y);
+			}
+            // Up left
+			else if (x > 0 && grid[y - 1][x - 1] == NULL) {
+                // Make particle move to the left in the future
+                p->velocity.x = -1;
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x-1, y+vy);
+			}
+            // Left
+			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
+                // Make particle move to the left in the future
+                p->velocity.x = randNum % 2 ? -2 : -1;
+
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + p->velocity.x, y);
+			}
+            else {
+                p->hasBeenUpdated = false;
+            }
+        }
+        else {
+            if (vx == 0) {
+                vx = -1;
+            }
+            // Particle wants to move to the left
+
+			if (x > 0 && grid[y - 1][x - 1] == NULL) {
+                // Left up
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y+vy);
+			}
+			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
+                // Left
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+
+                vx *= 1.5;
+                p->velocity.x = Clamp(p->velocity.x * 1.5, -5, 0);
+
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y);
+			}
+			else if (x < WIDTH - 1 && grid[y - 1][x + 1] == NULL) {
+                // Right up
+                p->velocity.x = 1;
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x+1, y+vy);
+			}
+			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
+                // Right
+                p->velocity.x = randNum % 2 ? 1 : 2;
+				p->velocity.y /= 2.0;
+				vy = p->velocity.y;
+				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + p->velocity.x, y);
+            }
+            else {
+                p->hasBeenUpdated = false;
+            }
+        }
     }
 }
 
