@@ -370,12 +370,11 @@ static bool TranslateParticle(particle* grid[HEIGHT][WIDTH], int x, int y, int x
 }
 
 static void UpdateSolidStuckParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
-    if (grid[y][x] == NULL) return;
-    
-    float dt = GetFrameTime();
     particle* p = grid[y][x];
 
-    if (p->hasBeenUpdated) return;
+    if (p == NULL || p->hasBeenUpdated) return;
+
+    float dt = GetFrameTime();
     MaterialProperties mat = props[p->mat];
 
     int randNum = rand();
@@ -421,10 +420,12 @@ static void UpdateSolidStuckParticle(particle* grid[HEIGHT][WIDTH], int x, int y
 }
 
 static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
-    if (grid[y][x] == NULL) return;
+
+    particle* p = grid[y][x];
+
+    if (p == NULL || p->hasBeenUpdated) return;
 
     float dt = GetFrameTime();
-    particle* p = grid[y][x];
 
     p->velocity.y = Clamp(p->velocity.y + (gravity * dt), -10.0, 10.0);
     int vy = p->velocity.y;
@@ -433,7 +434,7 @@ static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     if (grid[y + 1][x] == NULL) {
         p->hasBeenUpdated = TranslateParticle(grid, x, y, x, y + vy);
     }
-    else if (props[grid[y + 1][x]->mat].type == LIQUID && !grid[y+1][x]->hasBeenUpdated) {
+    else if ((props[grid[y + 1][x]->mat].type == GAS || props[grid[y + 1][x]->mat].type == LIQUID) && !grid[y+1][x]->hasBeenUpdated) {
 	    p->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x, y + 1);
     }
@@ -441,7 +442,7 @@ static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     else if (grid[y + 1][x-1] == NULL) {
         p->hasBeenUpdated = TranslateParticle(grid, x, y, x - 1, y + vy);
     }
-    else if (props[grid[y + 1][x-1]->mat].type == LIQUID && !grid[y+1][x-1]->hasBeenUpdated) {
+    else if ((props[grid[y + 1][x]->mat].type == GAS || props[grid[y + 1][x]->mat].type == LIQUID) && !grid[y+1][x-1]->hasBeenUpdated) {
 	    grid[y][x]->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x - 1, y + 1);
     }
@@ -449,7 +450,7 @@ static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
     else if (grid[y + 1][x+1] == NULL) {
         p->hasBeenUpdated = TranslateParticle(grid, x, y, x + 1, y + vy);
     }
-    else if (props[grid[y + 1][x+1]->mat].type == LIQUID && !grid[y+1][x+1]->hasBeenUpdated) {
+    else if ((props[grid[y + 1][x]->mat].type == GAS || props[grid[y + 1][x]->mat].type == LIQUID) && !grid[y+1][x+1]->hasBeenUpdated) {
 	    grid[y][x]->hasBeenUpdated = true;
         SwapParticles(grid, x, y, x+1, y + 1);
     }
@@ -459,10 +460,11 @@ static void UpdateSolidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
 }
 
 static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
-    if (grid[y][x] == NULL) return;
+    particle* p = grid[y][x];
+
+    if (p == NULL || p->hasBeenUpdated) return;
 
     float dt = GetFrameTime();
-    particle* p = grid[y][x];
     int randNum = rand();
 
     MaterialProperties matProps = props[p->mat];
@@ -477,13 +479,21 @@ static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
         // Add some variance because it looks kinda cool and seems to solve some issues
 	    p->hasBeenUpdated = TranslateParticle(grid, x, y, x + (rand() % 2 ? 1 : -1), y + vy);
 	}
+    else if (props[grid[y + 1][x]->mat].type == GAS) {
+        SwapParticles(grid, x, y, x, y + 1);
+    }
     else {
         if (vx > 0) {
             // Particle wants to move to the right
             
             // Down right
-			if (x < WIDTH - 1 && grid[y + 1][x + 1] == NULL) {
-				p->hasBeenUpdated = TranslateParticle(grid, x, y, x+vx, y+vy);
+			if (x < WIDTH - 1 && (grid[y + 1][x + 1] == NULL || props[grid[y + 1][x + 1]->mat].type == GAS)) {
+                if (grid[y + 1][x + 1] == NULL) {
+				    p->hasBeenUpdated = TranslateParticle(grid, x, y, x+vx, y+vy);
+                }
+                else {
+                    SwapParticles(grid, x, y, x + 1, y + 1);
+                }
 			}
             // Right
 			else if (x + 1 < WIDTH - 1 && grid[y][x + 1] == NULL) {
@@ -519,9 +529,14 @@ static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
             }
             // Particle wants to move to the left
 
-			if (x > 0 && grid[y + 1][x - 1] == NULL) {
+			if (x - 1 > 0 && (grid[y + 1][x - 1] == NULL || props[grid[y + 1][x - 1]->mat].type == GAS)) {
                 // Left down
-				p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y+vy);
+                if (grid[y + 1][x - 1] == NULL) {
+				    p->hasBeenUpdated = TranslateParticle(grid, x, y, x + vx, y+vy);
+                }
+                else {
+                    SwapParticles(grid, x, y, x - 1, y + 1);
+                }
 			}
 			else if (x - 1 > 0 && grid[y][x - 1] == NULL) {
                 // Left
@@ -560,11 +575,11 @@ static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
                 free(grid[y - 1][x]);
                 grid[y - 1][x] = CreateParticle(FIRE);
             }
-            else if (grid[y][x + 1] != NULL && props[grid[y][x + 1]->mat].flammable && randNum % 2 == 0) {
+            else if (x < WIDTH - 1 && grid[y][x + 1] != NULL && props[grid[y][x + 1]->mat].flammable && randNum % 2 == 0) {
                 free(grid[y][x + 1]);
                 grid[y][x + 1] = CreateParticle(FIRE);
             }
-            else if (grid[y][x - 1] != NULL && props[grid[y][x - 1]->mat].flammable && randNum % 2 == 1) {
+            else if (x > 0 && grid[y][x - 1] != NULL && props[grid[y][x - 1]->mat].flammable && randNum % 2 == 1) {
                 free(grid[y][x-1]);
                 grid[y][x-1] = CreateParticle(FIRE);
             }
@@ -573,11 +588,11 @@ static void UpdateLiquidParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
 }
 
 static void UpdateGasParticle(particle* grid[HEIGHT][WIDTH], int x, int y) {
-    if (grid[y][x] == NULL) return;
+    particle* p = grid[y][x];
+
+    if (p == NULL || p->hasBeenUpdated) return;
 
     float dt = GetFrameTime();
-    particle* p = grid[y][x];
-    if (p->hasBeenUpdated) return;
 
     int randNum = rand();
     if (randNum % 10 < 4) {
