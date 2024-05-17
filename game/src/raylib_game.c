@@ -130,7 +130,7 @@ static Vector2Int TranslateSolidParticle(particle_t* grid[HEIGHT * WIDTH], int x
 static void SpawnParticles(particle_t* grid[HEIGHT * WIDTH], int x, int y, particle_mat_t material);
 
 float isSurroundedByType(particle_t* grid[WIDTH * HEIGHT], int x, int y, particle_mat_t mat);
-bool CheckValidMove(particle_t** grid, int i, particle_state_t particleState);
+bool CheckValidMove(particle_t** grid, int x, int y, particle_state_t particleState);
 bool withinBounds(int x, int y);
 
 //----------------------------------------------------------------------------------
@@ -1240,3 +1240,4 @@ float isSurroundedByType(particle_t* grid[WIDTH * HEIGHT], int x, int y, particl
     }
     return gaming;
 }
+
