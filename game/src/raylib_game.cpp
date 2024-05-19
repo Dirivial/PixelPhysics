@@ -166,8 +166,8 @@ int main(void)
         grid[i] = NULL;
     }
 
-    int currentMaterial = SAND;
-    char fpsText[100];
+    particle_mat_t currentMaterial = SAND;
+    char* fpsText = (char *)malloc(100 * sizeof(char));
     bool doUpdate = false, continualUpdate = true;
 
     Vector2 mousePosLastFrame = { 0,0 };
@@ -177,8 +177,8 @@ int main(void)
     Rectangle player = { 0, 0, 20, 20 };
 
     Camera2D camera = { 0 };
-    camera.target = (Vector2){ player.x + 20.0f, player.y + 20.0f };
-    camera.offset = (Vector2){ screenWidth / 2.0f, screenHeight / 2.0f };
+    camera.target = { player.x + 20.0f, player.y + 20.0f };
+    camera.offset = { screenWidth / 2.0f, screenHeight / 2.0f };
     camera.zoom = 1.0f;
     camera.rotation = 0.0f;
 
@@ -238,7 +238,7 @@ int main(void)
         }
 
         // Update camera position based on player position
-        camera.target = (Vector2){ player.x + 20.0f, player.y + 20.0f };
+        camera.target = { player.x + 20.0f, player.y + 20.0f };
 
         if (IsKeyPressed(KEY_ENTER)) {
             continualUpdate = !continualUpdate;
@@ -260,7 +260,7 @@ int main(void)
             Vector2 nextPos = GetScreenToWorld2D(mouse, camera);
             nextPos.x = WIDTH * ((int)nextPos.x) / GetScreenWidth();
             nextPos.y = HEIGHT * ((int)nextPos.y) / GetScreenHeight();
-            fprintf(stdout, "{%f:%f} -> {%f:%f}\n", mousePosLastFrame.x, mousePosLastFrame.y, nextPos.x, nextPos.y);
+            //fprintf(stdout, "{%f:%f} -> {%f:%f}\n", mousePosLastFrame.x, mousePosLastFrame.y, nextPos.x, nextPos.y);
             SpawnParticles(grid, mousePosLastFrame, nextPos, currentMaterial);
             mousePosLastFrame = nextPos;
         }
@@ -343,14 +343,14 @@ int main(void)
 
                 //DrawTextureRec(target.texture, (Rectangle){ 0, 0, (float)target.texture.width, (float)-target.texture.height }, (Vector2){ 0, 0 }, WHITE);
 				DrawTexturePro(target.texture,
-				   (Rectangle){0, 0, target.texture.width, target.texture.height}, // Use correct dimensions
-				   (Rectangle){0, 0, 1280, 800}, // Ensure it covers the full screen
-				   (Vector2){0, 0}, 0.0f, WHITE);
+				   {0, 0, (float)target.texture.width, (float)target.texture.height}, // Use correct dimensions
+				   {0, 0, 1280, 800}, // Ensure it covers the full screen
+				   {0, 0}, 0.0f, WHITE);
 			EndShaderMode();
 		EndTextureMode();
         
         int fps = GetFPS();
-        sprintf(&fpsText, "%d - %d p - %d u\0", fps, updatedParticles, actuallyUpdatedParticles);
+        sprintf(fpsText, "%d - %d p - %d u\0", fps, updatedParticles, actuallyUpdatedParticles);
         BeginDrawing();
             ClearBackground(RAYWHITE);     // Clear screen background
 
@@ -363,9 +363,9 @@ int main(void)
 
                 
 				DrawTexturePro(target.texture,
-							   (Rectangle){0, 0, target.texture.width, -target.texture.height},
-							   (Rectangle){0, 0, GetScreenWidth(), GetScreenHeight() },
-							   (Vector2){0, 0}, 0.0f, WHITE);
+							   {0, 0, (float)target.texture.width, (float) - target.texture.height},
+							   {0, 0, (float)GetScreenWidth(), (float)GetScreenHeight() },
+							   {0, 0}, 0.0f, WHITE);
 
                 for (int i = -1000; i < 1000; i += 50) DrawText("A", i, 0, 14, ORANGE);
                 DrawRectangleRec(player, RED);
@@ -422,7 +422,7 @@ static void SpawnParticles(particle_t** grid, Vector2 from, Vector2 to, particle
 		for (int i = -10; i < 10; i++) {
 			for (int j = -10; j < 10; j++) {
 
-				if (Vector2Distance((Vector2){to.x + i, to.y + j}, (Vector2){from.x + i, from.y + j}) < 8) {
+				if (Vector2Distance({to.x + i, to.y + j}, {from.x + i, from.y + j}) < 8) {
 					FillGapsWithParticle(grid, from.x + i, from.y + j, to.x + i, to.y + j, mat);
 					//grid[(y + j) * WIDTH + x + i] = CreateParticle(mat);
 				}
@@ -433,7 +433,6 @@ static void SpawnParticles(particle_t** grid, Vector2 from, Vector2 to, particle
 
 static particle_t* CreateParticle(particle_mat_t material) {
 
-    fprintf(stdout, "gaming\n");
     particle_t* newParticle = (particle_t*) malloc(sizeof(particle_t));
 
     if (newParticle == NULL) {
@@ -516,9 +515,6 @@ static void FillGapsWithParticle(particle_t** grid, int x0, int y0, int x1, int 
             grid[GetIndex(x, y)] = CreateParticle(mat);
         } /* e_xy+e_y < 0 */
 	}
-
-    // Return ax, ay because x & y can technically be outside of grid
-    return (Vector2Int) {ax, ay};
 }
 
 static Vector2Int TranslateParticleWithMaterial(particle_t** grid, int x0, int y0, int dx, int dy, mat_prop_t* mat) {
@@ -633,7 +629,7 @@ static Vector2Int TranslateParticleWithMaterial(particle_t** grid, int x0, int y
 	}
 
     // Return ax, ay because x & y can technically be outside of grid
-    return (Vector2Int) {ax, ay};
+    return {ax, ay};
 }
 
 static Vector2Int TranslateParticle(particle_t** grid, int x, int y, int x1, int y1) {
@@ -715,7 +711,7 @@ static Vector2Int TranslateParticle(particle_t** grid, int x, int y, int x1, int
 			ay = y;
         } /* e_xy+e_y < 0 */
 	}
-    return (Vector2Int) { ax, ay };
+    return { ax, ay };
 }
 
 static void UpdateSolidStuckParticle(particle_t* grid[HEIGHT * WIDTH], int x, int y) {

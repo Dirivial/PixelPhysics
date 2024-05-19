@@ -14,22 +14,22 @@
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\raylib_game.c">
+    <ClCompile Include="src\raylib_game.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\screen_ending.c">
+    <ClCompile Include="src\screen_ending.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\screen_gameplay.c">
+    <ClCompile Include="src\screen_gameplay.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\screen_logo.c">
+    <ClCompile Include="src\screen_logo.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\screen_options.c">
+    <ClCompile Include="src\screen_options.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="src\screen_title.c">
+    <ClCompile Include="src\screen_title.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
