@@ -28,8 +28,8 @@
 #endif
 
 
-#define WIDTH 256
-#define HEIGHT 256
+#define WIDTH 512
+#define HEIGHT 512
 
 typedef struct Vector2Int {
     int x;
@@ -75,7 +75,7 @@ static mat_prop_t props[9] = {
     {30, 2, 10, 10, 50, 0, false, false, true, LIQUID, {0, 121, 241, 255}}, // Water
     {2, 2, 5, 10, 0, 5, true, false, false, GAS, {60, 60, 60, 255}}, // Smoke
     {0, 0, 0, 0, 10, 0, false, false, true, SOLID_STUCK, {76, 63, 47, 255}}, // Wood
-    {2, 1, 1.5, 4, 0, 0, false, true, false, LIQUID, {255, 101, 32, 255}}, // Lava
+    {2, 2, 1.5, 3, 0, 0, false, true, false, LIQUID, {255, 101, 32, 255}}, // Lava
     {0, 0, 0, 0, 0, 0, false, false, false, SOLID_STUCK, {100, 100, 100, 255}}, // Stone
     {0, 0, 0, 0, 0, 1, true, true, false, SOLID_STUCK, {255, 180, 10, 255}}, // Fire
     {2, 2, 10, 10, 50, 0, false, false, true, LIQUID, {40, 30, 21, 255}}, // Oil
@@ -129,7 +129,7 @@ static int GetIndex(int x, int y);
 static void SwapParticles(particle_t* grid[HEIGHT * WIDTH], int x1, int y1, int x2, int y2);
 static Vector2Int TranslateParticle(particle_t** grid, int x, int y, int x1, int y1);
 static Vector2Int TranslateParticleWithMaterial(particle_t** grid, int x, int y, int x1, int y1, mat_prop_t* mat);
-static void SpawnParticles(particle_t** grid, int x, int y, Vector2Int from, particle_mat_t material);
+static void SpawnParticles(particle_t** grid, Vector2 from, Vector2 to, particle_mat_t material);
 static void FillGapsWithParticle(particle_t** grid, int x1, int y1, int x2, int y2, particle_mat_t material);
 
 float isSurroundedByType(particle_t* grid[WIDTH * HEIGHT], int x, int y, particle_mat_t mat);
@@ -143,13 +143,17 @@ int main(void)
 {
     // Initialization
     //---------------------------------------------------------
+
+    int screenWidth = 1280;
+    int screenHeight = 800;
+
     SetConfigFlags(FLAG_BORDERLESS_WINDOWED_MODE | FLAG_WINDOW_RESIZABLE);
-    InitWindow(1280, 800, "PixelPhysics");
-    SetWindowMinSize(1280, 800);
+    InitWindow(screenWidth, screenHeight, "PixelPhysics");
+    SetWindowMinSize(screenWidth, screenHeight);
 
     RenderTexture2D target = LoadRenderTexture(WIDTH, HEIGHT);
     RenderTexture2D noBloom = LoadRenderTexture(WIDTH, HEIGHT);
-    RenderTexture2D bloomTarget = LoadRenderTexture(1280, 800); // Texture for bloom shader
+    RenderTexture2D bloomTarget = LoadRenderTexture(WIDTH, HEIGHT); // Texture for bloom shader
  
     SetTextureFilter(target.texture, TEXTURE_FILTER_POINT | TEXTURE_WRAP_CLAMP);
     SetTextureFilter(bloomTarget.texture, TEXTURE_WRAP_CLAMP);
@@ -166,9 +170,17 @@ int main(void)
     char fpsText[100];
     bool doUpdate = false, continualUpdate = true;
 
-    Vector2Int mousePosLastFrame = { 0,0 };
+    Vector2 mousePosLastFrame = { 0,0 };
 
     Shader shader = LoadShader(0, TextFormat("resources/bloom.fs", GLSL_VERSION));
+
+    Rectangle player = { 0, 0, 20, 20 };
+
+    Camera2D camera = { 0 };
+    camera.target = (Vector2){ player.x + 20.0f, player.y + 20.0f };
+    camera.offset = (Vector2){ screenWidth / 2.0f, screenHeight / 2.0f };
+    camera.zoom = 1.0f;
+    camera.rotation = 0.0f;
 
     // Setup and init first screen
 
@@ -182,35 +194,51 @@ int main(void)
     while (!WindowShouldClose())    // Detect window close button or ESC key
     {
         frameCounter = (frameCounter + 1) % INT_MAX;
-        float scale = MinFloat((float)GetScreenWidth() / WIDTH, (float)GetScreenHeight() / HEIGHT);
+        //float scale = MinFloat((float)GetScreenWidth() / WIDTH, (float)GetScreenHeight() / HEIGHT);
 
 		int maxX = GetScreenWidth();
 		int maxY = GetScreenHeight();
-		if (IsKeyPressed(KEY_S)) {
+
+		if (IsKeyPressed(KEY_ONE)) {
             currentMaterial = SAND;
 		}
-		else if (IsKeyPressed(KEY_W)) {
+		else if (IsKeyPressed(KEY_TWO)) {
             currentMaterial = WATER;
 		}
-		else if (IsKeyPressed(KEY_G)) {
+		else if (IsKeyPressed(KEY_SIX)) {
             currentMaterial = SMOKE;
 		}
-		else if (IsKeyPressed(KEY_E)) {
+		else if (IsKeyPressed(KEY_FOUR)) {
             currentMaterial = WOOD;
 		}
-		else if (IsKeyPressed(KEY_A)) {
+		else if (IsKeyPressed(KEY_THREE)) {
             currentMaterial = LAVA;
         }
-        else if (IsKeyPressed(KEY_Q)) {
+        else if (IsKeyPressed(KEY_FIVE)) {
             currentMaterial = OIL;
         }
-        else if (IsKeyPressed(KEY_Z)) {
+        else if (IsKeyPressed(KEY_SEVEN)) {
             currentMaterial = STONE;
         }
-        else if (IsKeyPressed(KEY_R)) {
+        else if (IsKeyPressed(KEY_EIGHT)) {
             currentMaterial = FIRE;
         }
 
+        if (IsKeyDown(KEY_LEFT)) {
+            player.x -= 1000 * GetFrameTime();
+        }
+        if (IsKeyDown(KEY_RIGHT)) {
+            player.x += 1000 * GetFrameTime();
+        }
+        if (IsKeyDown(KEY_UP)) {
+            player.y -= 1000 * GetFrameTime();
+        }
+        if (IsKeyDown(KEY_DOWN)) {
+            player.y += 1000 * GetFrameTime();
+        }
+
+        // Update camera position based on player position
+        camera.target = (Vector2){ player.x + 20.0f, player.y + 20.0f };
 
         if (IsKeyPressed(KEY_ENTER)) {
             continualUpdate = !continualUpdate;
@@ -222,15 +250,19 @@ int main(void)
 
 		// Insert a sand particle wherever the mouse is pressed
 		Vector2 mouse = GetMousePosition();
-		int x = (mouse.x / maxX) * WIDTH;
-		int y = (mouse.y / maxY) * HEIGHT;
 
         if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-            mousePosLastFrame = (Vector2Int) { x, y };
+            mousePosLastFrame = GetScreenToWorld2D(mouse, camera);
+            mousePosLastFrame.x = WIDTH * ((int)mousePosLastFrame.x) / GetScreenWidth();
+            mousePosLastFrame.y = HEIGHT * ((int)mousePosLastFrame.y) / GetScreenHeight();
         }
-        if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
-            SpawnParticles(grid, x, y, mousePosLastFrame, currentMaterial);
-            mousePosLastFrame = (Vector2Int) { x, y };
+        else if (IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
+            Vector2 nextPos = GetScreenToWorld2D(mouse, camera);
+            nextPos.x = WIDTH * ((int)nextPos.x) / GetScreenWidth();
+            nextPos.y = HEIGHT * ((int)nextPos.y) / GetScreenHeight();
+            fprintf(stdout, "{%f:%f} -> {%f:%f}\n", mousePosLastFrame.x, mousePosLastFrame.y, nextPos.x, nextPos.y);
+            SpawnParticles(grid, mousePosLastFrame, nextPos, currentMaterial);
+            mousePosLastFrame = nextPos;
         }
 
         int start, end, step;
@@ -320,19 +352,25 @@ int main(void)
         int fps = GetFPS();
         sprintf(&fpsText, "%d - %d p - %d u\0", fps, updatedParticles, actuallyUpdatedParticles);
         BeginDrawing();
-            ClearBackground(BLACK);     // Clear screen background
-            /*
-			DrawTexturePro(bloomTarget.texture,
-						   (Rectangle){0, 0, bloomTarget.texture.width, bloomTarget.texture.height},
-						   (Rectangle){0, 0, GetScreenWidth(), GetScreenHeight()},
-						   (Vector2){0, 0}, 0.0f, WHITE);
-                           */
+            ClearBackground(RAYWHITE);     // Clear screen background
 
-			DrawTexturePro(target.texture,
-						   (Rectangle){0, 0, target.texture.width, -target.texture.height},
-						   (Rectangle){0, 0, GetScreenWidth(), GetScreenHeight()},
-						   (Vector2){0, 0}, 0.0f, WHITE);
-            DrawText(fpsText, 5, 5, 14, RAYWHITE);
+            BeginMode2D(camera);
+				/* DrawTexturePro(bloomTarget.texture,
+							   (Rectangle){0, 0, bloomTarget.texture.width, bloomTarget.texture.height},
+							   (Rectangle){0, 0, GetScreenWidth(), GetScreenHeight()},
+							   (Vector2){0, 0}, 0.0f, WHITE);
+							   */
+
+                
+				DrawTexturePro(target.texture,
+							   (Rectangle){0, 0, target.texture.width, -target.texture.height},
+							   (Rectangle){0, 0, GetScreenWidth(), GetScreenHeight() },
+							   (Vector2){0, 0}, 0.0f, WHITE);
+
+                for (int i = -1000; i < 1000; i += 50) DrawText("A", i, 0, 14, ORANGE);
+                DrawRectangleRec(player, RED);
+            EndMode2D();
+            DrawText(fpsText, 5, 5, 14, BLACK);
         EndDrawing();
 
         updatedParticles = 0;
@@ -364,25 +402,28 @@ static particle_t* GetParticle(particle_t* grid[HEIGHT * WIDTH], int x, int y) {
     return grid[y * WIDTH + x];
 }
 
-static void SpawnParticles(particle_t** grid, int x, int y, Vector2Int from, particle_mat_t mat) {
+static void SpawnParticles(particle_t** grid, Vector2 from, Vector2 to, particle_mat_t mat) {
 
     if (props[mat].type != SOLID_STUCK) {
-        //FillGapsWithParticle(grid, x, y, from.x, from.y, mat);
+
+        FillGapsWithParticle(grid, from.x, from.y, to.x, to.y, mat);
+        /*
 		for (int i = -15; i < 16; i++) {
 			for (int j = -15; j < 16; j++) {
-				if (Vector2Distance((Vector2){x, y}, (Vector2){x + i, y + j}) < 8) {
-					FillGapsWithParticle(grid, x + i, y + j, from.x + i, from.y + j, mat);
+				if (Vector2Distance((Vector2){from.x + i, from.y + j}, (Vector2){to.x, to.y}) < 8) {
+                    //fprintf
+					FillGapsWithParticle(grid, to.x + i, to.y + j, from.x + i, from.y + j, mat);
 				}
 			}
 		}
-        
+        */ 
     }
     else {
 		for (int i = -10; i < 10; i++) {
 			for (int j = -10; j < 10; j++) {
 
-				if (Vector2Distance((Vector2){x, y}, (Vector2){x + i, y + j}) < 8) {
-					FillGapsWithParticle(grid, x + i, y + j, from.x + i, from.y + j, mat);
+				if (Vector2Distance((Vector2){to.x + i, to.y + j}, (Vector2){from.x + i, from.y + j}) < 8) {
+					FillGapsWithParticle(grid, from.x + i, from.y + j, to.x + i, to.y + j, mat);
 					//grid[(y + j) * WIDTH + x + i] = CreateParticle(mat);
 				}
 			}
@@ -391,7 +432,10 @@ static void SpawnParticles(particle_t** grid, int x, int y, Vector2Int from, par
 }
 
 static particle_t* CreateParticle(particle_mat_t material) {
+
+    fprintf(stdout, "gaming\n");
     particle_t* newParticle = (particle_t*) malloc(sizeof(particle_t));
+
     if (newParticle == NULL) {
         perror("Failed to allocate memory for new particle");
         exit(1);
